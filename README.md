@@ -1,6 +1,6 @@
 [quadplay✜ website](https://morgan3d.github.io/quadplay)
 
-**quadplay✜** is a fantasy console by Shmuel and Morgan at [CasualEffects](https://casual-effects.com)
+**quadplay✜** is a fantasy console 
 for creating and playing retro-style video games on any device.
 
 - [Play games online](https://morgan3d.github.io/quadplay/console/quadplay.html?)
@@ -11,6 +11,7 @@ for creating and playing retro-style video games on any device.
 
 ![](doc/emulator.png)
 
+**quadplay✜** is maintained by Shmuel Ravensky. It was originally created by Morgan at [CasualEffects](https://casual-effects.com), who still contributes.
 
 Platforms
 ========================================================

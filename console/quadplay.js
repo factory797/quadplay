@@ -1,4 +1,4 @@
-/* By Morgan McGuire @CasualEffects https://casual-effects.com LGPL 3.0 License */
+/* Copyright Shmuel Ravensky. LGPL 3.0 License */
 "use strict";
 
 // Set to false when working on quadplay itself.
@@ -7,6 +7,30 @@ const deployed = true;
 // If true, use a WebWorker thread for the virtual GPU. This variable
 // appears in the CPU runtime as well.
 const $THREADED_GPU = true;
+
+
+// The committed quadplay-runtime-gpu.wasm is the shipped artifact
+// and _dev/makeGPU is run by hand, so when developing, compare the
+// hash that makeGPU embedded against the source being served.
+function checkGPUBuild() {
+    const refresh = '?refresh=' + new Date().getTime();
+    Promise.all([fetch('quadplay-runtime-gpu.c' + refresh).then(r => r.arrayBuffer()),
+                 fetch('quadplay-runtime-gpu.wasm' + refresh).then(r => r.arrayBuffer())]).then(function ([source, wasm]) {
+        // FNV-1a, as in makeGPU
+        let hash = 2166136261;
+        for (const byte of new Uint8Array(source)) { hash = Math.imul(hash ^ byte, 16777619) >>> 0; }
+
+        // The module imports a 256-page memory, so this instance is discarded after one call
+        return WebAssembly.instantiate(wasm, {env: {memory: new WebAssembly.Memory({initial: 256, maximum: 4096})}}).then(function (result) {
+            // The export is a signed i32
+            if ((result.instance.exports.source_hash() >>> 0) !== hash) {
+                alert('quadplay-runtime-gpu.wasm is out of date with quadplay-runtime-gpu.c. Run _dev/makeGPU and reload.');
+            }
+        });
+    });
+}
+
+if (! deployed) { checkGPUBuild(); }
 
 // Set to true to allow editing of quad://example/ files when developing quadplay
 const ALLOW_EDITING_EXAMPLES = ! deployed;
@@ -3127,14 +3151,19 @@ function reloadRuntime(oncomplete) {
     // loadScript() in quadplay.html adds the refresh token to the
     // scripts it writes. These are written here, so they add their own.
     const refresh = '?refresh=' + new Date().getTime();
-    for (const script of ['cpu', $THREADED_GPU ? false : 'gpu', 'physics', 'ai', 'common']) {
+    for (const script of ['cpu', $THREADED_GPU ? false : 'gpu', $THREADED_GPU ? false : 'gpu-wasm', 'physics', 'ai', 'common']) {
         if (script) {
             src += `<script src='quadplay-runtime-${script}.js${refresh}'></script>\n`;
         }
     }
     QRuntime.document.write(src);
-    
+
+    // The unthreaded GPU loads its primitives asynchronously
     QRuntime.onload = function () {
+        ($THREADED_GPU ? Promise.resolve() : QRuntime.$gpu_load()).then(initializeRuntime);
+    };
+
+    function initializeRuntime() {
         conduitNetwork.reset_conduits();
         QRuntime.$resize_framebuffer(SCREEN_WIDTH, SCREEN_HEIGHT);
         QRuntime.reset_clip();
@@ -3508,7 +3537,7 @@ function reloadRuntime(oncomplete) {
         QRuntime.debug_pause     = onPauseButton;
         
         if (oncomplete) { oncomplete(); }
-    };
+    }
 
     QRuntime.document.close();
 }

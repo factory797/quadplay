@@ -8,6 +8,10 @@ of [<quadplay/>](manual.md.html).
 
 ## 2026 October 20
 
+- Rasterization primitives of the virtual GPU moved from JavaScript to C compiled to WebAssembly with SIMD.
+  On cross-origin isolated pages the GPU worker shares its framebuffer memory with the main thread.
+  Exported games include an `.htaccess` for Apache, and the manual's Deploying Games section
+  describes the headers for itch.io, nginx, and other hosts
 - API and language changes:
   - optimized map span rendering and fixed off-by one errors; 4x speedup of Warlock 3D example
   - `touch` pointer input is now in world space instead of camera space

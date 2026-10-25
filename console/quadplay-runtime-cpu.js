@@ -1,4 +1,4 @@
-/* By Morgan McGuire @CasualEffects https://casual-effects.com LGPL 3.0 License */
+/* Copyright Shmuel Ravensky. LGPL 3.0 License */
 
 // quadplay runtime and hardware layer.
 //
@@ -10,6 +10,10 @@
 
 // If undefined, the virtual GPU runs on the same thread as the CPU.
 var $GPU;
+
+// Uint8ClampedArray view of the GPU output in shared wasm memory,
+// when the GPU worker reports one
+var $gpuOutput;
 if ($THREADED_GPU) {
     // loadScript() in quadplay.html adds the refresh token to the
     // scripts it writes. This URL is written here, so it adds its own.
@@ -18,6 +22,13 @@ if ($THREADED_GPU) {
         // This message handler runs on the main "quadplay CPU" thread, within
         // the $QRuntime scope context.
 
+        if (event.data.type === 'output') {
+            // The GPU rasterizes into shared wasm memory, so frames
+            // are read from there instead of the transferred buffer
+            $gpuOutput = new Uint8ClampedArray(event.data.memory.buffer, event.data.offset, event.data.bytes);
+            return;
+        }
+
         if (event.data.type !== 'submitFrame') {
             $console.log('Unknown message received from GPU: ', event);
             return;
@@ -25,7 +36,7 @@ if ($THREADED_GPU) {
 
         console.assert(event.data.updateImageData);
         console.assert(event.data.updateImageData32);
-        
+
         // Paste the updateImageData32 back
         $updateImageData = event.data.updateImageData;
         $updateImageData32 = event.data.updateImageData32;
@@ -37,8 +48,12 @@ if ($THREADED_GPU) {
             // the set() method or the ImageData constructor. There does not appear to be a way
             // to make it share a view of the buffer that has been transferred, and ImageData
             // is not Transferrable. Use the set() method so that we are not allocating memory.
-            
-            $updateImageData.data.set(new Uint8ClampedArray($updateImageData32.buffer));
+
+            if ($gpuOutput) {
+                $updateImageData.data.set($gpuOutput);
+            } else {
+                $updateImageData.data.set(new Uint8ClampedArray($updateImageData32.buffer));
+            }
 
             $submitFrame($updateImageData, $updateImageData32, event.data.gpuTime);
             

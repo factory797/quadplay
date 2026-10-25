@@ -10,6 +10,7 @@ var $performance = performance;
 // be used as a library in frameworks that do not support Workers.
 var $is_web_worker = (self.WorkerGlobalScope && typeof importScripts === 'function');
 
+
 ////////////////////////////////////////////////////////////
 //
 // Virtual GPU State
@@ -21,12 +22,8 @@ var $is_web_worker = (self.WorkerGlobalScope && typeof importScripts === 'functi
 // Integer dimensions
 var $SCREEN_WIDTH, $SCREEN_HEIGHT;
 
-// Writeable framebuffer memory, 16bpp. Uint16Array. Allocated by $resize_framebuffer()
+// Writeable framebuffer memory, 16bpp. Uint16Array. Allocated by $gpu_resize_framebuffer()
 var $screen;
-
-// Aliased version of $screen as Uint32Array; still 16bpp, two pixels
-// per element. Allocated by $resize_framebuffer()
-var $screen32;
 
 // 32 bpp output double buffer. Sent back to the main thread.
 var $updateImageData32;
@@ -42,56 +39,50 @@ var $fontArray;
 ////////////////////////////////////////////////////////////
 
 if ($is_web_worker) {
+    importScripts('quadplay-runtime-common.js', 'quadplay-runtime-gpu-wasm.js');
 
-    importScripts('quadplay-runtime-common.js');
+    // Hold messages until the primitives have loaded
+    const pending = [];
+    self.onmessage = function (event) { pending.push(event.data); };
 
-    // onmessage is a specific global name for web workers
-    self.onmessage = function (event) {
-        // console.log('Event received:', event.data.type);
-        
-        switch (event.data.type) {
-        case 'set_texture':
-            // Fix the extended properties, which are not copied by
-            // the built-in JavaScript copying/buffer transfer.
-            for (let sheet of event.data.spritesheetArray) {
-                sheet.$uint16DataFlippedX.width = sheet.$uint16Data.width = sheet.size.x;
-                sheet.$uint16DataFlippedX.height = sheet.$uint16Data.height = sheet.size.y;
-            }
-            for (let font of event.data.fontArray) {
-                font.$data.width = font.$size.x;
-                font.$data.height = font.$size.y;
-            }
-            
-            $gpu_set_texture(event.data.spritesheetArray, event.data.fontArray);
-            break;
-
-        case 'resize_framebuffer':
-            $gpu_resize_framebuffer(event.data.SCREEN_WIDTH, event.data.SCREEN_HEIGHT);
-            break;
-
-        case 'gpu_execute':
-            $updateImageData32 = event.data.updateImageData32;
-            $updateImageData = event.data.updateImageData;
-            $gpu_execute(...event.data.args);
-            break;
-        } // switch
-    };
-} // if webworker
-
-
-// Called for both the webworker and the main thread
-function $gpu_set_texture(spritesheetArray, fontArray) {
-    $spritesheetArray   = spritesheetArray;
-    $fontArray          = fontArray;
+    $gpu_load().then(function () {
+        self.onmessage = function (event) { $gpu_message(event.data); };
+        for (const data of pending) { $gpu_message(data); }
+    });
 }
 
 
-function $gpu_resize_framebuffer(w, h) {
-    $SCREEN_WIDTH = w;
-    $SCREEN_HEIGHT = h;
-    $screen = new Uint16Array(w * h);
-    $screen32 = new Uint32Array($screen.buffer);
+function $gpu_message(data) {
+    // console.log('Event received:', data.type);
+
+    switch (data.type) {
+    case 'set_texture':
+        // Fix the extended properties, which are not copied by
+        // the built-in JavaScript copying/buffer transfer.
+        for (let sheet of data.spritesheetArray) {
+            sheet.$uint16DataFlippedX.width = sheet.$uint16Data.width = sheet.size.x;
+            sheet.$uint16DataFlippedX.height = sheet.$uint16Data.height = sheet.size.y;
+        }
+        for (let font of data.fontArray) {
+            font.$data.width = font.$size.x;
+            font.$data.height = font.$size.y;
+        }
+
+        $gpu_set_texture(data.spritesheetArray, data.fontArray);
+        break;
+
+    case 'resize_framebuffer':
+        $gpu_resize_framebuffer(data.SCREEN_WIDTH, data.SCREEN_HEIGHT);
+        break;
+
+    case 'gpu_execute':
+        $updateImageData32 = data.updateImageData32;
+        $updateImageData = data.updateImageData;
+        $gpu_execute(...data.args);
+        break;
+    } // switch
 }
+
 
 function $square(x) { return x * x; }
 
@@ -107,43 +98,28 @@ function $gpu_execute(commandList, backgroundSpritesheetIndex, backgroundColor16
     // Clear the screen
     if (backgroundSpritesheetIndex !== undefined) {
         // Image background
-        $screen.set($spritesheetArray[backgroundSpritesheetIndex].$uint16Data);
+        $gpu_clear_spritesheet(backgroundSpritesheetIndex);
     } else {
         // Color background (force alpha = 1)
-        $screen.fill(backgroundColor16, 0, $screen.length);
+        $gpu_clear(backgroundColor16);
     }
-    
+
     for (let i = 0; i < commandList.length; ++i) {
         const cmd = commandList[i];
         $executeTable[cmd.opcode](cmd);
     }
 
-    {
-        // Convert 16-bit to 32-bit
-        const dst32 = $updateImageData32;
-        const src32 = $screen32;
-        const N = src32.length;
-        for (let s = 0, d = 0; s < N; ++s) {
-            // Read two 16-bit pixels at once
-            let src = src32[s];
-            
-            // Turn into two 32-bit pixels as ABGR -> FFBBGGRR. Only
-            // read color channels, as the alpha channel is overwritten with fully
-            // opaque.
-            let C = ((src & 0x0f00) << 8) | ((src & 0x00f0) << 4) | (src & 0x000f);
-            dst32[d] = 0xff000000 | C | (C << 4); ++d; src = src >> 16;
-            
-            C = ((src & 0x0f00) << 8) | ((src & 0x00f0) << 4) | (src & 0x000f);
-            dst32[d] = 0xff000000 | C | (C << 4); ++d;
-        }
-    }
-    
+    $gpu_expand();
+
     if ($is_web_worker) {
         // console.log('Transferring updateImageData back to CPU thread');
 
-        // Transfer the underlying ArrayBuffer for the framebuffer to avoid copy and allocation
+        // Transfer the underlying ArrayBuffer for the framebuffer to
+        // avoid copy and allocation. When $gpu_shared_output is true
+        // the main thread reads the frame from wasm memory instead
+        // and this buffer only synchronizes the two threads.
         postMessage(
-            {type: 'submitFrame', gpuTime: performance.now() - startTime, updateImageData: $updateImageData, updateImageData32: $updateImageData32}, 
+            {type: 'submitFrame', gpuTime: performance.now() - startTime, updateImageData: $updateImageData, updateImageData32: $updateImageData32},
             [$updateImageData32.buffer]);
 
         // Mark these as null since the ArrayBuffer has been transferred. This will
@@ -153,121 +129,6 @@ function $gpu_execute(commandList, backgroundSpritesheetIndex, backgroundColor16
         $updateImageData32 = null;
     } else {
         $submitFrame($updateImageData, $updateImageData32);
-    }
-}
-
-
-/** Color is 16-bit ABGR4. This implementation assumes a little-endian
-    processor (which includes all current Intel, AMD, ARM, Raspberry
-    Pi processors by default). DataView can be used to make an
-    endian-independent version if required. */
-function $pset(x, y, color, clipX1, clipY1, clipX2, clipY2) {
-    // quadplay pixels have integer centers, so we must round instead of just truncating.
-    // Otherwise, for example, -0.7, which is offscreen, would become 0 and be visible.
-    //
-    // "i >>> 0" converts from signed to unsigned int, which forces negative values to be large
-    // and lets us early-out sooner in the tests.
-    const i = $Math.round(x) >>> 0;
-    const j = $Math.round(y) >>> 0;
-
-    if ((i <= clipX2) && (j <= clipY2) && (i >= clipX1) && (j >= clipY1)) {
-        const offset = i + j * $SCREEN_WIDTH;
-
-        // Must be unsigned shift to avoid sign extension
-        const a15 = color >>> 12;
-
-        if (a15 === 0xf) {
-            // No blending
-            $screen[offset] = color;
-        } else if (a15 !== 0) {
-            // Blend
-
-            // No need to force to unsigned int because the alpha channel of the output is always 0xff
-            const a = a15 * (1 / 15);
-            let back = $screen[offset] >>> 0;
-            let result = 0xF000;
-            result |= ((back & 0x0F00) * (1 - a) + (color & 0x0F00) * a + 0.5 * 0x100) & 0x0F00;
-            result |= ((back & 0x00F0) * (1 - a) + (color & 0x00F0) * a + 0.5 * 0x010) & 0x00F0;
-            result |= ((back & 0x000F) * (1 - a) + (color & 0x000F) * a + 0.5) & 0x000F;
-            $screen[offset] = result;
-        }
-    }
-}
-
-/** Assumes x2 >= x1 and that color is ABGR4. Does not assume that x1 and x2 or y are
-    on screen. 
-
-    Rounds all coordinates and then draws from x1 to x2 inclusive.
-*/
-function $hline(x1, y, x2, color, clipX1, clipY1, clipX2, clipY2) {
-    x1 = $Math.round(x1) | 0;
-    x2 = $Math.round(x2) | 0;
-    y  = $Math.round(y)  | 0;
-
-    if ((x2 >= clipX1) && (x1 <= clipX2) && (y >= clipY1) && (y <= clipY2)) {
-        // Some part is on screen
-
-        // Don't draw past the edge of the screen
-        x1 = $Math.max(x1, clipX1) | 0;
-        x2 = $Math.min(x2, clipX2) | 0;
-        
-        let a15 = (color >>> 12) & 0xf;
-        if (a15 === 0xf) {
-            // Overwrite
-            $screen.fill(color, x1 + (y * $SCREEN_WIDTH), x2 + (y * $SCREEN_WIDTH) + 1);
-        } else if (a15 !== 0) {
-            // Blend (see comments in $pset)
-            const a = a15 * (1 / 15);
-            const inva = 1 - a;
-            const b = (color & 0xF00) * a + 0.5 * 0x100;
-            const g = (color & 0x0F0) * a + 0.5 * 0x010;
-            const r = (color & 0x00F) * a + 0.5;
-
-            for (let x = x1, offset = (x1 + y * $SCREEN_WIDTH) | 0; x <= x2; ++x, ++offset) {
-                let back = $screen[offset] >>> 0;
-                let result = 0xF000 >>> 0;
-                result |= ((back & 0x0F00) * inva + b) & 0x0F00;
-                result |= ((back & 0x00F0) * inva + g) & 0x00F0;
-                result |= ((back & 0x000F) * inva + r) & 0x000F;
-                $screen[offset] = result;
-            }
-        }
-    }
-}
-
-
-/** Assumes y2 >= y1 and that color is ABGR4. Does not assume that y1 and y2 or x are
-    on screen */
-function $vline(x, y1, y2, color, clipX1, clipY1, clipX2, clipY2) {
-    x  = $Math.round(x) | 0;
-    y1 = $Math.round(y1) | 0;
-    y2 = $Math.round(y2) | 0;
-    
-    if ((y2 >= clipY1) && (y1 <= clipY2) && (x >= clipX1) && (x <= clipX2)) {
-        y1 = $Math.max(clipY1, y1);
-        y2 = $Math.min(clipY2, y2);
-
-        let a15 = color >>> 12;
-        if (a15 === 0xf) {
-            for (let y = y1, offset = y1 * $SCREEN_WIDTH + x; y <= y2; ++y, offset += $SCREEN_WIDTH) {
-                $screen[offset] = color;
-            }
-        } else if (a15 !== 0) {
-            // Blend (see comments in $pset)
-            const a = a15 * (1 / 15);
-            const inva = 1 - a;
-            const b = (color & 0x0F00) * a + 0.5 * 0x100;
-            const g = (color & 0x00F0) * a + 0.5 * 0x010;
-            const r = (color & 0x000F) * a + 0.5;
-            for (let y = y1, offset = y1 * $SCREEN_WIDTH + x; y <= y2; ++y, offset += $SCREEN_WIDTH) {
-                let back = $screen[offset] >>> 0;
-                let result = 0xF000;
-                result |= ((back & 0x0F00) * inva + b) & 0x0F00;
-                result |= ((back & 0x00F0) * inva + g) & 0x00F0;
-                result |= ((back & 0x000F) * inva + r) & 0x000F;
-                $screen[offset] = result;
-            }
-        }
     }
 }
 
@@ -354,7 +215,7 @@ function $executeCIR(cmd) {
 
     // The small epsilon keeps the y value from slightly overhanging by one pixel
     // due to roundoff when jittering
-    const j_unclipped_last = $Math.round(y + radius - 0.00001) | 0; 
+    const j_unclipped_last = $Math.round(y + radius - 0.00001) | 0;
     const j_max = $Math.min(j_unclipped_last, clipY2 | 0) | 0;
 
     // Intersect this scanline
@@ -388,9 +249,9 @@ function $executeCIR(cmd) {
 
                 // Top
                 $hline(lo, j, hi, outline, clipX1, clipY1, clipX2, clipY2);
-                
+
                 prev_lo = lo; prev_hi = hi;
-                
+
                 // There is no fill in this case because the outline dominates the row
                 continue;
             } else if (lo < prev_lo - 1) {
@@ -407,7 +268,7 @@ function $executeCIR(cmd) {
                 // On the bottom half of the circle and need a 2+ horizontal pixel outline.
                 $hline(lo, j, next_lo - 1, outline, clipX1, clipY1, clipX2, clipY2);
                 $hline(next_hi + 1, j, hi, outline, clipX1, clipY1, clipX2, clipY2);
-                
+
                 prev_lo = next_lo; prev_hi = next_hi;
                 // Bring in the fill bounds so that they do not overdraw the outline
                 lo = next_lo; hi = next_hi;
@@ -437,7 +298,7 @@ function $executeCIR(cmd) {
     if (color & 0xf000) {
         // offset
         let ox = radius - 1, oy = 0;
-        
+
         // step
         let dx = 1, dy = 1;
         let err = dx - radius * 2;
@@ -449,11 +310,11 @@ function $executeCIR(cmd) {
             if (ox !== oy) {
                 // Bottom
                 $hline(x - ox, y + oy, x + ox, color, clipX1, clipY1, clipX2, clipY2);
-                
+
                 // Top
                 if (oy > 0) { $hline(x - ox, y - oy, x + ox, color, clipX1, clipY1, clipX2, clipY2); }
             }
-                
+
             let old = oy;
             // -4 gives better shape for small circles
             if (err <= -4) {
@@ -463,7 +324,7 @@ function $executeCIR(cmd) {
             }
 
             // ...intentionally no "else" to allow diagonal changes in both x and y position...
-            
+
             if (err > -4) {
                 // Caps
                 $hline(x - old, y + ox, x + old, color, clipX1, clipY1, clipX2, clipY2);
@@ -475,7 +336,7 @@ function $executeCIR(cmd) {
         } // while
     } // if color
 
-    
+
     if ((outline & 0xf000) && (outline !== color)) {
         // offset
         let ox = radius - 1, oy = 0;
@@ -502,11 +363,11 @@ function $executeCIR(cmd) {
 
             // Top cap
             $pset(x - oy, y - ox, outline, clipX1, clipY1, clipX2, clipY2);
-            
+
             if (oy > 0) {
                 // Bottom cap
                 $pset(x + oy, y + ox, outline, clipX1, clipY1, clipX2, clipY2);
-                
+
                 // Top cap
                 $pset(x + oy, y - ox, outline, clipX1, clipY1, clipX2, clipY2);
             }
@@ -546,9 +407,9 @@ function $executeREC(cmd) {
             $vline(x2, y1 + 1, y2 - 1, outline, clipX1, clipY1, clipX2, clipY2);
             x1 += 1; y1 += 1; x2 -= 1; y2 -= 1;
         }
-        
+
         if (fill & 0xf000) {
-            
+
             // Snap to integer and set_clip to screen. We don't need to
             // round because we know that the rect is visible.
             x1 = $Math.max((x1 + 0.5) | 0, clipX1);
@@ -557,7 +418,7 @@ function $executeREC(cmd) {
             y2 = $Math.min((y2 + 0.5) | 0, clipY2);
 
             // Blend spans
-            for (let y = y1, i = y1 * $SCREEN_WIDTH; y <= y2; ++y, i += $SCREEN_WIDTH) {
+            for (let y = y1; y <= y2; ++y) {
                 $hline(x1, y, x2, fill, clipX1, clipY1, clipX2, clipY2);
             }
         }
@@ -570,348 +431,14 @@ function $executeLIN(cmd) {
 }
 
 
-function $line(x1, y1, x2, y2, color, clipX1, clipY1, clipX2, clipY2, open1, open2) {
-    if (y1 === y2) {
-        // Horizontal perf optimization/avoid divide by zero
-        const dx = $Math.sign(x2 - x1)
-        if (open1) { x1 += dx; }
-        if (open2) { x2 -= dx; }
-        $hline($Math.min(x1, x2), y1, $Math.max(x1, x2), color, clipX1, clipY1, clipX2, clipY2);
-    } else if (x1 === x2) {
-        // Vertical perf optimization
-        const dy = $Math.sign(y2 - y1)
-        if (open1) { y1 += dy; }
-        if (open2) { y2 -= dy; }
-        $vline(x1, $Math.min(y1, y2), $Math.max(y1, y2), color, clipX1, clipY1, clipX2, clipY2);
-    } else {
-        // General case via DDA
-
-        // Slope:
-        const dx = x2 - x1, dy = y2 - y1;
-        const moreHorizontal = Math.abs(dx) > Math.abs(dy);
-
-        if ((moreHorizontal && (x2 < x1)) ||
-            (! moreHorizontal && (y2 < y1))) {
-            // Swap endpoints to go in increasing direction on the dominant axis.
-            // Slope is unchanged because both deltas become negated.
-            let temp;
-            temp = y1; y1 = y2; y2 = temp;
-            temp = x1; x1 = x2; x2 = temp;
-            temp = open1; open1 = open2; open2 = temp;
-        }
-
-        if (moreHorizontal) {
-            // Crop horizontally:
-            const m = dy / dx;
-
-            if (open1) { ++x1; y1 += m; }            
-            if (open2) { --x2; /* y2 is unused */ } 
-
-            // Adjust for x1 being clipped
-            const step = $Math.max(clipX1, x1) - x1;
-            x1 += step; y1 += m * step;
-
-            // Adjust for x2 being clipped (y2 is unused, so ignore it)
-            x2 = $Math.min(x2, clipX2);
-
-            x1 |= 0; x2 |= 0;
-
-            if ((color & 0xf000) === 0xf000) {
-                // No blending
-                for (let x = x1, y = y1; x <= x2; ++x, y += m) {
-                    const j = $Math.round(y) >>> 0;
-                    if ((j <= clipY2) && (j >= clipY1)) {
-                        $screen[x + j * $SCREEN_WIDTH | 0] = color;
-                    }
-                }
-            } else {
-                for (let x = x1, y = y1; x <= x2; ++x, y += m) {
-                    $pset(x, y, color, clipX1, clipY1, clipX2, clipY2);
-                } // for x
-            }
-        } else { // Vertical
-            // Compute the inverted slope
-            const m = dx / dy;
-
-            if (open1) { ++y1; x1 += m; } 
-            if (open2) { --y2; x2 -= m; } 
-            
-            // Crop vertically:
-            const step = $Math.max(clipY1, y1) - y1;
-            x1 += step * m; y1 += step;
-            y2 = $Math.min(y2, clipY2);
-            y1 |= 0; y2 |= 0;
-
-            if ((color & 0xf000) === 0xf000) {
-                // No blending
-                for (let y = y1, base = (y1 * $SCREEN_WIDTH) | 0, x = x1; y <= y2; ++y, base += $SCREEN_WIDTH | 0, x += m) {
-                    const i = $Math.round(x) >>> 0;
-                    if ((i <= clipX2) && (i >= clipX1)) {
-                        $screen[base + i] = color;
-                    }
-                } // for y
-            } else {
-                for (let y = y1, x = x1; y <= y2; ++y, x += m) {
-                    $pset(x, y, color, clipX1, clipY1, clipX2, clipY2);
-                } // for y
-            }
-            
-        } // if more horizontal
-    } // if diagonal
-}
-
-
-/* Run-length encoded horizontal or vertical spans of points
-   that have already been clipped and flattened to 16-bit */
-// Packs a color with float channels in [0, 1] the way the CPU's
-// $colorToUint16() does, so that composited span pixels match it.
-function $spanPackColor(r, g, b, a) {
-    r = (r < 0) ? 0 : (r > 1) ? 1 : r;
-    g = (g < 0) ? 0 : (g > 1) ? 1 : g;
-    b = (b < 0) ? 0 : (b > 1) ? 1 : b;
-    a = (a < 0) ? 0 : (a > 1) ? 1 : a;
-    return ((((a * 15 + 0.5) & 0xf) << 12) | ((b * 15 + 0.5) << 8) | ((g * 15 + 0.5) << 4) | (r * 15 + 0.5)) >>> 0;
-}
-
-
 function $executeSPN(cmd) {
-    // A horizontal span of map texels. The run layout is documented
-    // in draw_map_span(). Pixel i has map coordinate
-    // (map_x0 + i * step_x, map_y0 + i * step_y), evaluated here with
-    // the same expression the CPU used to find the runs.
-    const data = cmd.data;
-    const N = cmd.data_length;
-    const map_x0 = cmd.map_x0, map_y0 = cmd.map_y0;
-    const step_x = cmd.step_x, step_y = cmd.step_y;
-    const ssX = cmd.sprite_size_x | 0, ssY = cmd.sprite_size_y | 0;
-    const ssXm1 = (ssX - 1) | 0, ssYm1 = (ssY - 1) | 0;
-    const low_res = cmd.low_res;
-    const override_mode = cmd.override_mode | 0;
-    const override_r = cmd.override_r, override_g = cmd.override_g, override_b = cmd.override_b, override_a = cmd.override_a;
-
-    // Override applied to an opaque texel, per channel nibble. The
-    // arithmetic is the CPU's: unpack as n * (1/15), blend, repack.
-    let lut_r, lut_g, lut_b;
-    if (override_mode) {
-        lut_r = new Uint8Array(16); lut_g = new Uint8Array(16); lut_b = new Uint8Array(16);
-        for (let n = 0; n < 16; ++n) {
-            let r = n * (1 / 15), g = r, b = r;
-            if (override_mode === 1) {
-                r += (override_r - r) * override_a;
-                g += (override_g - g) * override_a;
-                b += (override_b - b) * override_a;
-            } else {
-                r *= override_r; g *= override_g; b *= override_b;
-            }
-            const packed = $spanPackColor(r, g, b, 1);
-            lut_r[n] = packed & 0xf;
-            lut_g[n] = (packed >>> 4) & 0xf;
-            lut_b[n] = (packed >>> 8) & 0xf;
-        }
-    }
-
-    let dst_index = (cmd.x + $SCREEN_WIDTH * cmd.y) | 0;
-    let i = 0, src_index = 0;
-
-    // At half resolution every even pixel repeats the previous pixel
-    // when that pixel was drawn
-    let prev_drawn = false, prev_color = 0;
-
-    while (src_index < N) {
-        const length = data[src_index++];
-        const header = data[src_index++];
-        const count = header & 0x7FFF;
-
-        if (count === 0) {
-            // Skip run
-            i += length;
-            dst_index += length;
-            prev_drawn = false;
-            continue;
-        }
-
-        // The last pixel of this run is a repeated pixel that was
-        // drawn only if the previous pixel was drawn
-        const repeat_last = (header & 0x8000) !== 0;
-
-        // Two's complement int16
-        const mx = (data[src_index++] << 16) >> 16, my = (data[src_index++] << 16) >> 16;
-
-        const entry_index = src_index;
-        src_index += 4 * count;
-
-        // Single-layer case constants
-        const sheet = $spritesheetArray[data[entry_index]].$uint16Data;
-        const sheet_width = sheet.width >>> 0;
-        const corner_x = data[entry_index + 1] >>> 0, corner_y = data[entry_index + 2] >>> 0;
-        const flags = data[entry_index + 3];
-        const flip_x = (flags & 1) !== 0, flip_y = (flags & 2) !== 0;
-
-        const end = (i + length) | 0;
-        for (; i < end; ++i, ++dst_index) {
-            let color;
-
-            if (low_res && ((i & 1) === 0) && prev_drawn) {
-                color = prev_color;
-            } else if (repeat_last && (i === end - 1)) {
-                // The previous pixel was skipped, so skip this repeat too
-                continue;
-            } else {
-                let u = ((map_x0 + i * step_x - mx) * ssX) | 0;
-                let v = ((map_y0 + i * step_y - my) * ssY) | 0;
-                if (u > ssXm1) { u = ssXm1; }
-                if (v > ssYm1) { v = ssYm1; }
-
-                if (count === 1) {
-                    const tx = flip_x ? (ssXm1 - u) : u;
-                    const ty = flip_y ? (ssYm1 - v) : v;
-                    const texel = sheet[(corner_x + tx) + (corner_y + ty) * sheet_width] >>> 0;
-                    const a15 = texel >>> 12;
-
-                    if (a15 === 0xf) {
-                        if (override_mode) {
-                            color = (0xF000 | (lut_b[(texel >>> 8) & 0xf] << 8) | (lut_g[(texel >>> 4) & 0xf] << 4) | lut_r[texel & 0xf]) >>> 0;
-                        } else {
-                            color = texel;
-                        }
-                    } else if (a15 === 0) {
-                        // Transparent texel: skip the pixel
-                        prev_drawn = false;
-                        continue;
-                    } else {
-                        // Fractional alpha takes the composited path
-                        // below with a single layer
-                        color = -1;
-                    }
-                } else {
-                    color = -1;
-                }
-
-                if (color === -1) {
-                    // Composite the layers from the top down in
-                    // premultiplied space, as $get_map_pixel_color()
-                    // does on the CPU
-                    let result_a = 0, result_b = 0, result_g = 0, result_r = 0;
-                    let hit = false;
-                    let opaque_texel = -1;
-                    for (let k = 0, e = entry_index; k < count; ++k, e += 4) {
-                        const layer_sheet = $spritesheetArray[data[e]].$uint16Data;
-                        const f = data[e + 3];
-                        const tx = (f & 1) ? (ssXm1 - u) : u;
-                        const ty = (f & 2) ? (ssYm1 - v) : v;
-                        const texel = layer_sheet[(data[e + 1] + tx) + (data[e + 2] + ty) * (layer_sheet.width >>> 0)] >>> 0;
-                        const alpha16 = texel & 0xF000;
-                        if ((result_a === 0) && (alpha16 === 0xF000)) {
-                            opaque_texel = texel;
-                            break;
-                        } else if (alpha16 !== 0) {
-                            const layer_color_a = ((texel >>> 12) & 0xf) * (1 / 15);
-                            const kk = (1 / 15) * layer_color_a;
-                            const layer_color_b = ((texel >>> 8) & 0xf) * kk;
-                            const layer_color_g = ((texel >>> 4) & 0xf) * kk;
-                            const layer_color_r = (texel & 0xf) * kk;
-                            if (result_a === 0) {
-                                result_r = layer_color_r;
-                                result_g = layer_color_g;
-                                result_b = layer_color_b;
-                                result_a = layer_color_a;
-                            } else {
-                                const kr = 1 - result_a;
-                                result_r += layer_color_r * kr;
-                                result_g += layer_color_g * kr;
-                                result_b += layer_color_b * kr;
-                                result_a += layer_color_a * kr;
-                            }
-                            hit = true;
-                            if (result_a >= 0.995) { break; }
-                        }
-                    }
-
-                    if (opaque_texel >= 0) {
-                        if (override_mode) {
-                            color = (0xF000 | (lut_b[(opaque_texel >>> 8) & 0xf] << 8) | (lut_g[(opaque_texel >>> 4) & 0xf] << 4) | lut_r[opaque_texel & 0xf]) >>> 0;
-                        } else {
-                            color = opaque_texel;
-                        }
-                    } else if (! hit) {
-                        prev_drawn = false;
-                        continue;
-                    } else {
-                        let r = result_r, g = result_g, b = result_b;
-                        if (result_a > 0 && result_a < 0.995) {
-                            const inv_a = 1 / result_a;
-                            r *= inv_a; g *= inv_a; b *= inv_a;
-                        }
-                        if (override_mode === 1) {
-                            r += (override_r - r) * override_a;
-                            g += (override_g - g) * override_a;
-                            b += (override_b - b) * override_a;
-                        } else if (override_mode === 2) {
-                            r *= override_r; g *= override_g; b *= override_b;
-                        }
-                        color = $spanPackColor(r, g, b, result_a);
-                    }
-                }
-            }
-
-            // Must be unsigned shift to avoid sign extension
-            const a15 = color >>> 12;
-            if (a15 === 0xf) {
-                // No blending
-                $screen[dst_index] = color;
-            } else {
-                // Blend
-                const a = a15 * (1 / 15);
-                const back = $screen[dst_index] >>> 0;
-                let result = 0xF000;
-                result |= ((back & 0x0F00) * (1 - a) + (color & 0x0F00) * a + 0.5 * 0x0100) & 0x0F00;
-                result |= ((back & 0x00F0) * (1 - a) + (color & 0x00F0) * a + 0.5 * 0x0010) & 0x00F0;
-                result |= ((back & 0x000F) * (1 - a) + (color & 0x000F) * a + 0.5) & 0x000F;
-                $screen[dst_index] = result;
-            }
-
-            prev_drawn = true;
-            prev_color = color;
-        } // loop over pixels
-    } // loop over runs
+    $span(cmd);
 }
 
 
 function $executePIX(cmd) {
-    // Series of points that have already been clipped
-    // and converted to integers.
-    
-    const data = cmd.data;
-    const N = data.length;// (cmd.data_length !== undefined) ? cmd.data_length : data.length;
-    
     console.assert(! cmd.data_length);
-
-    // There's surprisingly no performance advantage for tracking
-    // whether blending is needed anywhere in the array during
-    // submission and extracting that case into a no-blend tiny loop
-    for (let p = 0; p < N; p += 2) {
-        const color = data[p + 1];
-        
-        // Must be unsigned shift to avoid sign extension
-        const a15 = color >>> 12;
-        
-        if (a15 === 0xf) {
-            // No blending
-            $screen[data[p]] = color;
-        } else {
-            // Blend
-            
-            // No need to force to unsigned int because the alpha channel of the output is always 0xff
-            const a = a15 * (1 / 15);
-            const offset = data[p];
-            let back = $screen[offset];
-            let result = 0xF000;
-            result |= ((back & 0x0F00) * (1 - a) + (color & 0x0F00) * a + 0.5 * 0x0100) & 0x0F00;
-            result |= ((back & 0x00F0) * (1 - a) + (color & 0x00F0) * a + 0.5 * 0x0010) & 0x00F0;
-            result |= ((back & 0x000F) * (1 - a) + (color & 0x000F) * a + 0.5) & 0x000F;
-            $screen[offset] = result;
-        }
-    }
+    $pixels(cmd.data);
 }
 
 
@@ -928,13 +455,13 @@ function $executeSPR(metaCmd) {
 
         let opacity = cmd.opacity;
         const override_color = cmd.override_color;
-        
+
         // Compute the net transformation matrix
 
         // Source bounds, inclusive
         const srcX1 = cmd.cornerX, srcX2 = cmd.cornerX + cmd.sizeX - 1,
               srcY1 = cmd.cornerY, srcY2 = cmd.cornerY + cmd.sizeY - 1;
-        
+
         // The net forward transformation is: (note that SX, SY = source center, not scale!)
         // c = cos, s = sin, f = scale
         //
@@ -957,7 +484,7 @@ function $executeSPR(metaCmd) {
         //                                   [ 1  ]
         //
         // The inverse transformation for computing destination bounds is:
-        //  
+        //
         // [dstx]   [1 0 DX][ c s 0][fx  0 0][1 0 -SX][srcx]
         // [dsty] = [0 1 DY][-s c 0][ 0 fy 0][0 1 -SY][srcy]
         // [ 1  ]   [0 0  1][ 0 0 1][ 0  0 1][0 0   1][ 1  ]
@@ -967,7 +494,7 @@ function $executeSPR(metaCmd) {
         // [dstx]   [E F DX][srcx - SX]
         // [dsty] = [G H DY][srcy - SY]
         //                  [   1     ]
-        
+
         // Source and destination centers
         const DX = cmd.x, DY = cmd.y,
               SX = srcX1 + cmd.sizeX * 0.5, SY = srcY1 + cmd.sizeY * 0.5;
@@ -986,7 +513,7 @@ function $executeSPR(metaCmd) {
         ////////////////////////////////////////////////////////////////////////////////
         // Compute the (inclusive) destination bounds by projecting all
         // four corners from texture space to screen space
-        
+
         let dstX1 = Infinity, dstX2 = -Infinity,
             dstY1 = Infinity, dstY2 = -Infinity;
 
@@ -999,7 +526,7 @@ function $executeSPR(metaCmd) {
                 // Transform from texture space to pixel space
                 let tmp = E * (srcX - SX) + G * (srcY - SY) + DX;
                 dstX1 = $Math.min(tmp, dstX1); dstX2 = $Math.max(tmp, dstX2);
-                
+
                 tmp     = F * (srcX - SX) + H * (srcY - SY) + DY;
                 dstY1 = $Math.min(tmp, dstY1); dstY2 = $Math.max(tmp, dstY2);
             }
@@ -1041,218 +568,40 @@ function $executeSPR(metaCmd) {
                         cmd.spritesheetIndex >= 0 &&
                         cmd.spritesheetIndex < $spritesheetArray.length,
                         'spritesheetIndex out of bounds:', cmd.spritesheetIndex);
-        // May be reassigned below when using flipped X values
-        let srcData = $spritesheetArray[cmd.spritesheetIndex].$uint16Data;
+        const srcData = $spritesheetArray[cmd.spritesheetIndex].$uint16Data;
         console.assert(srcData.width !== undefined);
 
         const srcDataWidth = srcData.width >>> 0;
-        
+
         if (($Math.abs($Math.abs(A) - 1) < 1e-10) && ($Math.abs(B) < 1e-10) &&
             ($Math.abs(C) < 1e-10) && ($Math.abs($Math.abs(D) - 1) < 1e-10) &&
             (! override_color)) {
-
-            // console.log('simple', srcData[0].toString(16), srcData[1].toString(16), srcData[2].toString(16));
 
             // Simple case; x and y-axis uniform scale, no rotation, and no alpha
             // test. Use a memcpy.  The x and y-axes may be inverted, and there
             // can be xy translation applied. This branch is primarily
             // here to accelerate map rendering.
 
-            // All of the "| 0" are to force values to integers, which massively
-            // improves performance on Safari (5x in some cases)
-
             const width = (dstX2 - dstX1 + 1) | 0;
             if (width >= 1) {
                 const srcY = ($Math.floor(kY * ((dstY1 + 0.5 - DY) * $Math.sign(D) + SY)) * kY + oY) | 0;
                 let srcOffset = ((-$Math.floor(-((dstX1 + 0.5 - DX) + SX)) - 1) + srcY * srcDataWidth) | 0;
-                let dstOffset = (dstX1 + dstY1 * $SCREEN_WIDTH) | 0;
+                const dstOffset = (dstX1 + dstY1 * $SCREEN_WIDTH) | 0;
                 const srcStep = (srcDataWidth * $Math.sign(D)) | 0;
 
-                if (A < 0) {
+                const flipped = A < 0;
+                if (flipped) {
                     // Use the flipped version
                     srcOffset = (srcOffset + srcDataWidth - 2 * SX) | 0;
-                    srcData = $spritesheetArray[cmd.spritesheetIndex].$uint16DataFlippedX;
                 }
-                if ((! cmd.hasAlpha) && ($Math.abs(opacity - 1) < 1e-10)) {
-                    // Memcpy case
-                    for (let dstY = dstY1; dstY <= dstY2; ++dstY) {
-                        //console.log(srcData.subarray(srcOffset, srcOffset + width));
-                        // This TypedArray.set call saves about 3.5
-                        // ms/frame compared to an explicit horizontal
-                        // loop for map rendering on Firefox. Chrome
-                        // and Safari are fast even for the general
-                        // case. So, this isn't necessary on those
-                        // browsers, but it doesn't hurt.
-                        
-                        // console.assert(dstOffset + width <= $screen.length, `dstX1=${dstX1}, dstX2 = ${dstX2}, $screen.length = ${$screen.length}, width = ${width}, dstOffset = ${dstOffset}, dstOffset % $SCREEN_WIDTH = ${dstOffset % $SCREEN_WIDTH}, dstY = ${dstY}, dstY2 = ${dstY2}`);
-                        // console.assert(srcOffset + width <= srcData.length);
-                        $screen.set(srcData.subarray(srcOffset, srcOffset + width), dstOffset);
-                        
-                        // Putting this increment at the bottom slightly
-                        // improves Safari performance
-                        dstOffset = (dstOffset + $SCREEN_WIDTH) | 0;
-                        srcOffset = (srcOffset + srcStep) | 0;
-                    } // dstY
-                } else {
-                    // Blending or alpha test case
-                    for (let dstY = dstY1; dstY <= dstY2; ++dstY) {
-                        for (let i = 0; i < width; ++i) {
-                            // Forcing the read value back to an integer improves
-                            // performance slightly on Safari (5%)
-                            let color = srcData[srcOffset + i] >>> 0;
-                            let a15 = color >>> 12;
 
-                            // Test alpha *first* in this case, because quite often we'll be in a sprite
-                            // with a lot of alpha === 0 pixels and not need to go further.
-                            if (a15 !== 0) {
-                                // Blending
-                                if (opacity < 1) {
-                                    // Make more transparent
-                                    a15 = (a15 * opacity + 0.5) >>> 0;
-                                }
-
-                                if (a15 === 0xf) {
-                                    // 100% alpha, no blend needed
-                                    $screen[dstOffset + i] = (color | 0xF000) >>> 0;
-                                } else if (a15 !== 0) {
-                                    // Fractional alpha
-                                
-                                    // No need to force to unsigned int because the alpha channel of
-                                    // the output is always 0xff
-                                    const a = a15 * (1 / 15);
-                                    const back = $screen[dstOffset + i] >>> 0;
-                                    
-                                    let result = 0xF000 >>> 0;
-                                    result |= ((back & 0x0F00) * (1 - a) + (color & 0x0F00) * a + 0.5 * 0x100) & 0x0F00;
-                                    result |= ((back & 0x00F0) * (1 - a) + (color & 0x00F0) * a + 0.5 * 0x010) & 0x00F0;
-                                    result |= ((back & 0x000F) * (1 - a) + (color & 0x000F) * a + 0.5) & 0x000F;
-
-                                    $screen[dstOffset + i] = result;
-                                }
-                            } // alpha > 0
-                        } // column
-                        
-                        // Putting this increment at the bottom slightly
-                        // improves Safari performance. Casting to integer
-                        // MASSIVELY improves Safari performance.
-                        dstOffset = (dstOffset + $SCREEN_WIDTH) | 0;
-                        srcOffset = (srcOffset + srcStep) | 0;
-                    } // row
-                } // needs alpha
+                $sprite_blit(cmd.spritesheetIndex, flipped, srcOffset, srcStep, dstOffset, width, dstY2 - dstY1 + 1, cmd.hasAlpha, opacity);
             } // width >= 1
-        } else if (! override_color && (! cmd.hasAlpha) && ($Math.abs(opacity - 1) < 1e-10)) {
-            // No blending case with rotation and scale
-            dstY1 |= 0; dstY2 |= 0;
-            for (let dstY = dstY1; dstY <= dstY2; ++dstY) {
-                // Offset by 0.5 to sample the pixel center
-                const xterms = (dstY + 0.5 - DY) * B + SX + (0.5 - DX) * A;
-                const yterms = (dstY + 0.5 - DY) * D + SY + (0.5 - DX) * C;
-
-                let dstOffset = dstX1 + dstY * $SCREEN_WIDTH;
-
-                for (let dstX = dstX1; dstX <= dstX2; ++dstX, ++dstOffset) {
-                    const srcX = ($Math.floor(kX * (dstX * A + xterms)) * kX + oX) | 0;
-                    const srcY = ($Math.floor(kY * (dstX * C + yterms)) * kY + oY) | 0;
-
-                    if ((srcX >= srcX1) && (srcX <= srcX2) && (srcY >= srcY1) && (srcY <= srcY2)) {
-                        // Inside the source sprite
-                        $screen[dstOffset] = srcData[srcX + srcY * srcDataWidth];
-                    } // clamp to source bounds
-                } // dstX
-            } // dstY
-            
         } else {
-            // General case.
-            // Extract the common terms of blending into the override color
-            const override = override_color;
-            const override_a = 1 - (override >>> 12) * (1 / 15);
-            const override_mode = (override_color && cmd.multiply) ? 3 : ((override_a === 1) ? 0 : (override_a === 0) ? 2 : 1);
-
-            const override_b = (override & 0x0F00) * (1 - override_a) + 0.5;
-            const override_g = (override & 0x00F0) * (1 - override_a) + 0.5;
-            const override_r = (override & 0x000F) * (1 - override_a) + 0.5;
-
-            // Float versions
-            const override_fb = ((override >> 8) & 0xf) * (1 / 15);
-            const override_fg = ((override >> 4) & 0xf) * (1 / 15);
-            const override_fr = (override & 0xf) * (1 / 15);
-
-            dstY1 |= 0; dstY2 |= 0;
-            for (let dstY = dstY1; dstY <= dstY2; ++dstY) {
-                // Offset by 0.5 to sample the pixel center
-                const xterms = (dstY + 0.5 - DY) * B + SX + (0.5 - DX) * A;
-                const yterms = (dstY + 0.5 - DY) * D + SY + (0.5 - DX) * C;
-
-                let dstOffset = (dstX1 + dstY * $SCREEN_WIDTH) | 0;
-
-                for (let dstX = dstX1; dstX <= dstX2; ++dstX, ++dstOffset) {
-                    const srcX = ($Math.floor(kX * (dstX * A + xterms)) * kX + oX) | 0;
-                    const srcY = ($Math.floor(kY * (dstX * C + yterms)) * kY + oY) | 0;
-
-                    if ((srcX >= srcX1) && (srcX <= srcX2) && (srcY >= srcY1) && (srcY <= srcY2)) {
-                        // Inside the source sprite
-
-                        // May be overriden below.
-                        let color = srcData[srcX + srcY * srcDataWidth];
-                        if (opacity < 1) {
-                            // Make more transparent
-
-                            // 4 high bits
-                            const alpha4 = ((color >>> 12) * opacity + 0.5) | 0;
-                            color = ((alpha4 << 12) | (color & 0xFFF)) >>> 0;
-                        }
-
-                        // the following is an inlining of: $pset(dstX, dstY, color, clipX1, clipY1, clipX2, clipY2);
-
-                        // Must be unsigned shift to avoid sign extension
-                        const a15 = color >>> 12;
-                        if (a15 === 0) {
-                            // 0% alpha
-                        } else {
-
-                            if (override_mode === 0) {
-                                // Common case, do nothing
-                            } else if (override_mode === 1) {
-                                // Blend
-                                const src = color;
-                                color &= 0xF000;
-                                color |= (override_b + (src & 0x0F00) * override_a) & 0x0F00;
-                                color |= (override_g + (src & 0x00F0) * override_a) & 0x00F0;
-                                color |= (override_r + (src & 0x000F) * override_a) & 0x000F;
-                            } else if (override_mode === 2) {
-                                // Completely overwrite
-                                color = (color & 0xF000) | (override & 0xFFF);
-                            } else { // mode 3
-                                // Multiply
-                                const src = color;
-                                color &= 0xF000;
-                                color |= (override_fb * (src & 0x0F00) + (0.5 * 0x100)) & 0x0F00;
-                                color |= (override_fg * (src & 0x00F0) + (0.5 * 0x010)) & 0x00F0;
-                                color |= (override_fr * (src & 0x000F) +  0.5)          & 0x000F;
-                            }
-
-                            if (a15 === 0xf) {
-                                // 100% alpha
-                                $screen[dstOffset] = color;
-                            } else if (a15 != 0) {
-                                // Fractional alpha
-                                
-                                // No need to force to unsigned int because the alpha channel of the output is always 0xff
-                                const a = a15 * (1 / 15);
-                                const back = $screen[dstOffset];
-                                let result = 0xF000;
-                                
-                                result |= ((back & 0x0F00) * (1 - a) + (color & 0x0F00) * a + 0.5 * 0x100) & 0x0F00;
-                                result |= ((back & 0x00F0) * (1 - a) + (color & 0x00F0) * a + 0.5 * 0x010) & 0x00F0;
-                                result |= ((back & 0x000F) * (1 - a) + (color & 0x000F) * a + 0.5) & 0x000F;
-                                
-                                $screen[dstOffset] = result;
-                            }
-                        }
-                    } // clamp to source bounds
-                } // i
-            } // j
-        } // if simple case
+            $sprite_affine(cmd.spritesheetIndex, srcX1, srcY1, srcX2, srcY2, dstX1, dstY1, dstX2, dstY2,
+                           A, B, C, D, DX, DY, SX, SY, kX, kY,
+                           cmd.hasAlpha, opacity, override_color, cmd.multiply);
+        }
     } // for each sprite
 }
 
@@ -1264,15 +613,13 @@ function $executeTXT(cmd) {
     const clipX1 = cmd.clipX1, clipY1 = cmd.clipY1,
           clipX2 = cmd.clipX2, clipY2 = cmd.clipY2;
     const font = $fontArray[cmd.fontIndex];
-    const data = font.$data.data;
-    const fontWidth = font.$data.width;
 
     let x = cmd.x, y = cmd.y;
 
     if ((font.spacing.x === 0) && (outline & 0xF000) && (color & 0xF000)) {
         // Script font with outline and color. Draw in two passes so that
         // the connectors are not broken by outlines.
-        
+
         // Disable color and re-issue the command to draw shadow and outline
         // before drawing the main text.
         cmd.color = 0;
@@ -1283,7 +630,7 @@ function $executeTXT(cmd) {
         // already processed.
         outline = shadow = 0;
     }
-    
+
     for (let c = 0; c < str.length; ++c) {
         // Remap the character to those in the font sheet
         const chr = str[c];
@@ -1296,46 +643,12 @@ function $executeTXT(cmd) {
             const charHeight = bounds.y2 - bounds.y1 + 1;
 
             // Shift the destination down by the offset of this character relative to the tile
-            for (let j = 0, dstY = y + bounds.y1 - tileY + bounds.yOffset; j < charHeight; ++j, ++dstY) {
-                // On screen in Y?
-                if (((dstY >>> 0) <= clipY2) && (dstY >= clipY1)) {
-                    for (let i = 0, dstX = x, dstIndex = x + (dstY * $SCREEN_WIDTH), srcIndex = bounds.x1 + (bounds.y1 + j) * fontWidth;
-                         i < charWidth;
-                         ++i, ++dstX, ++dstIndex, ++srcIndex) {
-                        
-                        const bits = data[srcIndex];
-
-                        // Most pixels in fonts are empty, so explicitly test if ANY bit
-                        // is set before looking deeper
-                        if (bits) {
-                            let v = 0;
-                            if (bits & 0x1) {                 // 0001 color = color
-                                v = color;
-                            } else if (outline & 0xf000) {
-                                // Outline is on
-                                if (bits & 0x8) {             // 1000 outline w/ shadow = shadow
-                                    // Shadow if using outline
-                                    v = shadow;
-                                } else if (bits & 0x2) {      // 0010 outline. May also match 0100 and be ignored
-                                    v = outline;
-                                }
-                            } else if (bits & 0x4) {          // 0100 shadow w/o outline
-                                // Shadow
-                                v = shadow;
-                            }
-
-                            // Could inline $pset code for performance and insert dstIndex. There
-                            // is not any apparent performance difference on Chrome, however
-                            if (v) { $pset(dstX, dstY, v, clipX1, clipY1, clipX2, clipY2); }
-                        }
-                    } // for i
-                } // on screen y
-            } // for j
-            
+            $glyph(cmd.fontIndex, bounds.x1, bounds.y1, charWidth, charHeight, x, y + bounds.y1 - tileY + bounds.yOffset,
+                   color, outline, shadow, clipX1, clipY1, clipX2, clipY2);
         } // character in font
 
         x += (bounds.x2 - bounds.x1 + 1) + $postGlyphSpace(chr + (str[c] || ''), font) - font.$borderSize * 2 + bounds.post;
-        
+
     } // for each character
 }
 
@@ -1347,7 +660,7 @@ function $executePLY(cmd) {
     const points = cmd.points;
     const numPoints = points.length >> 1;
     const color = cmd.color, outline = cmd.outline;
-    
+
     // Fill
     if (color & 0xf000) {
         const shift = ((outline & 0xf000) && (outline !== color)) ? 0.5 : 0;
@@ -1361,7 +674,7 @@ function $executePLY(cmd) {
 
         // vertical bounds on the triangle
         let y0 = clipY2 + 1, y1 = clipY1 - 1;
-        
+
         function addEdge(Sx, Sy, Ex, Ey) {
             if (Sy < Ey) {
                 // Update bounding box
@@ -1388,7 +701,7 @@ function $executePLY(cmd) {
         y0 = $Math.max(clipY1, $Math.floor(y0));
         y1 = $Math.min(clipY2, $Math.floor(y1));
         for (let y = y0; y <= y1; ++y) {
-            
+
             // For this scanline, intersect the edge lines of the triangle.
             // As a convex polygon, we can simply intersect ALL edges and then
             // take the min and max intersections.

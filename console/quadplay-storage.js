@@ -1,4 +1,4 @@
-/* By Morgan McGuire @CasualEffects https://casual-effects.com LGPL 3.0 License */
+/* Copyright Shmuel Ravensky. LGPL 3.0 License */
 "use strict";
 
 /* Synchronous string key-value store with the localStorage interface, held in

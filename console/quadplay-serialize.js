@@ -1,4 +1,4 @@
-/* By Morgan McGuire @CasualEffects https://casual-effects.com LGPL 3.0 License */
+/* Copyright Shmuel Ravensky. LGPL 3.0 License */
 "use strict";
 
 /* This is the transformer for quadplay types to use with serialize(). It supports:

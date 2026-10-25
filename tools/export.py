@@ -84,8 +84,24 @@ def generate_standalone(args, out_path, game_path, game_title):
    else:
       write_text_file(os.path.join(out_path, 'index.html'), htmlSource)
 
-   
-   
+   # Apache honors this when AllowOverride permits it. The headers
+   # make the page crossOriginIsolated so that the virtual GPU worker
+   # can share its WebAssembly memory with the main thread instead of
+   # copying the framebuffer every frame. Every file in the export is
+   # same-origin, which require-corp permits.
+   htaccessSource = """# Cross-origin isolation for SharedArrayBuffer (see the quadplay manual, Deploying Games)
+<IfModule mod_headers.c>
+  Header set Cross-Origin-Opener-Policy "same-origin"
+  Header set Cross-Origin-Embedder-Policy "require-corp"
+</IfModule>
+"""
+   if args.dry_run:
+      print('write .htaccess = ', htaccessSource)
+   else:
+      write_text_file(os.path.join(out_path, '.htaccess'), htaccessSource)
+
+
+
 def generate_remote(args, out_path, game_path, game_title):
    # Get the favicon path and copy it
    favicon_path, is_game_icon, favicon_size = get_favicon_path(args, game_path)
@@ -184,6 +200,7 @@ def export(args):
       ignore_files = ['launcher', 'templates',
                       'ace', 'lib/dagre.min.js',
                       'quadplay-ide*.js',
+                      'quadplay-runtime-gpu.c',
                       'wraps/carbon.png', 'wraps/oak.jpg', 'wraps/strips.png', 'wraps/walnut_burl.jpg']
 
       def custom_ignore(dir, files):

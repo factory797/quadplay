@@ -4401,6 +4401,39 @@ will have its own rules and restrictions. The code provided with
 own closed-source came). See the Credits section for more information.
 
 
+### Cross-Origin Isolation
+
+The emulator renders in a web worker. When the page is
+[cross-origin isolated](https://developer.mozilla.org/en-US/docs/Web/API/Window/crossOriginIsolated),
+the worker shares its framebuffer memory with the page and skips a
+copy of the framebuffer every frame. Otherwise the game still runs,
+but with that copy. The difference matters most on Raspberry Pi and
+phones.
+
+A page is cross-origin isolated when the web server sends these two
+HTTP headers with every file of the game:
+
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Cross-Origin-Opener-Policy: same-origin
+Cross-Origin-Embedder-Policy: require-corp
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The <quadplay/> local server sends them. itch.io sends them when you
+check the SharedArrayBuffer option described below. GitHub Pages
+cannot send custom headers. For your own web server, see the Web
+Server section below.
+
+To check a deployed game, open the browser's JavaScript console on
+the game page and evaluate `crossOriginIsolated`. It is `true`
+when the headers are in effect.
+
+The headers block cross-origin content that does not opt in with
+a `Cross-Origin-Resource-Policy` header. A standalone export is
+entirely same-origin, so it is unaffected. A `--noquad` export
+embeds the emulator from `morgan3d.github.io`, which is
+cross-origin, so do not send the headers for that kind of export.
+
+
 ### itch.io
 
 Deploying to [itch.io](https://itch.io/) as a Browser Game allows you
@@ -4422,6 +4455,7 @@ The steps are:
      - Mobile friendly: Yes
         - Orientation: Landscape
      - Automatically start on page load
+     - SharedArrayBuffer support: checked (see Cross-Origin Isolation above)
   - Viewport: 770 x 474 (this will yield 2x scaling on most devices)
   - Visibility & Access: Public
 
@@ -4506,6 +4540,24 @@ generated zipfile to your server.
 
 Your URL will be just https://myserver.com/mygame for the directory containing
 the `index.html` file.
+
+Send the two Cross-Origin Isolation headers for the game's directory.
+The export includes an `.htaccess` file that does this on Apache when
+the server configuration has `AllowOverride FileInfo` (or `All`) for
+the directory and `mod_headers` enabled. On nginx, add the headers
+to the `location` block that serves the game:
+
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ nginx
+location /mygame/ {
+    add_header Cross-Origin-Opener-Policy "same-origin";
+    add_header Cross-Origin-Embedder-Policy "require-corp";
+}
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+On Apache without `.htaccess` support, put the same `Header set`
+directives from the `.htaccess` file in a `<Directory>` block of the
+server configuration. On other servers, static hosts, and CDNs, set
+the headers with whatever custom header mechanism the host provides.
 
 #### Minimal
 If you wish to only host the source files for your game and not all of quadplay,

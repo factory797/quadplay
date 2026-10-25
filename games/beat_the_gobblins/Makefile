@@ -12,7 +12,7 @@ all:
 	@../../tools/sprite_json_generator.py -u
 
 # this target deploys to a github repo that you can then point at with a url like:
-# https://morgan3d.github.io/quadplay/console/quadplay.html?game=https://<USER_NAME>.github.io/<DEPLOY_REPO_NAME>/<GAME_NAME>.game.json
+# https://factory797.github.io/quadplay/console/quadplay.html?game=https://<USER_NAME>.github.io/<DEPLOY_REPO_NAME>/<GAME_NAME>.game.json
 # the target needs to be something like: DEPLOY_REMOTE = git@github.com:<USER_NAME>/<DEPLOY_REPO_NAME>.git
 deploy:
 ifneq ($(GITSTATUS), 0)

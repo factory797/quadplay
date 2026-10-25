@@ -1,4 +1,4 @@
-/* By Morgan McGuire @CasualEffects https://casual-effects.com LGPL 3.0 License 
+/* Copyright 2026 Shmuel Ravensky, 2019-2025 Morgan McGuire. LGPL 3.0 License 
  
    Overall IDE functionality not needed when running in just emulator mode.
    See quadplay-ide-game.js for the game.json editor pane.

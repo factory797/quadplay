@@ -1,4 +1,4 @@
-/* By Morgan McGuire @CasualEffects https://casual-effects.com LGPL 3.0 License 
+/* Copyright 2026 Shmuel Ravensky, 2019-2025 Morgan McGuire. LGPL 3.0 License 
 
    Editor for the game.json settings.
  */
@@ -341,7 +341,7 @@ function makeGame(srcURL) {
     if (! isQuadserver) {
         // Can't create a game on this server
         if (window.confirm('This game is hosted on the web. You must launch quadplay✜ from a script on your computer to create a new game. Go to the quadplay✜ installer website now?')) {
-            window.open('https://github.com/morgan3d/quadplay');
+            window.open('https://github.com/factory797/quadplay');
         }
         
         return;

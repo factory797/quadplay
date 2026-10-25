@@ -1,4 +1,4 @@
-/* By Morgan McGuire @CasualEffects https://casual-effects.com LGPL 3.0 License
+/* Copyright 2026 Shmuel Ravensky, 2019-2025 Morgan McGuire. LGPL 3.0 License
 
   This is the default host networking that operates by streaming the screen.
   See quadplay-conduit.js for the explicit state synchronization API and
@@ -566,7 +566,7 @@ function computeHostingURL() {
 
     if (url.startsWith('http://127.0.0.1:')) {
         // Use public quadplay
-        url = 'https://morgan3d.github.io/quadplay/console/app.html?'
+        url = 'https://factory797.github.io/quadplay/console/app.html?'
     }
 
     // Ensure we're using the app framing

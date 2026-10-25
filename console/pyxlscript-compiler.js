@@ -1,4 +1,4 @@
-/* By Morgan McGuire @CasualEffects https://casual-effects.com LGPL 3.0 License */
+/* Copyright 2026 Shmuel Ravensky, 2019-2025 Morgan McGuire. LGPL 3.0 License */
 "use strict";
 
 const SHOW_COMPILED_CODE = false;

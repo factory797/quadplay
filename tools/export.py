@@ -123,7 +123,7 @@ def generate_remote(args, out_path, game_path, game_title):
   </head>
   <body style="margin: 0; background: #000; position: absolute; top: 0; bottom: 0; left: 0; right: 0">
     <script>
-      document.write('<iframe src="https://morgan3d.github.io/quadplay/console/quadplay.html#fastReload=1&game=' + 
+      document.write('<iframe src="https://factory797.github.io/quadplay/console/quadplay.html#fastReload=1&game=' + 
           (location + '').replace(/\\/[^/]*$/, '/') + 
           '{game_path}&quit=reload" style="width: 100%; height: 100%; margin: 0; padding: 0; overflow: hidden; border: none" allow="gamepad; fullscreen *; autoplay" msallowfullscreen="true" allowfullscreen="true" webkitallowfullscreen="true"></iframe>');
     </script>

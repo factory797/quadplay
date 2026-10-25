@@ -70,7 +70,7 @@ if "%has_python%"=="0" (
 
 if not exist "quadplay-install.zip" (
 	echo Downloading Quadplay zipfile...
-	curl --location --output quadplay-install.zip https://github.com/morgan3d/quadplay/archive/refs/heads/main.zip
+	curl --location --output quadplay-install.zip https://github.com/factory797/quadplay/archive/refs/heads/main.zip
 	echo Quadplay zipfile download complete.
 	echo.
 )

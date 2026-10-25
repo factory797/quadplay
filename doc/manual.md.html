@@ -102,12 +102,12 @@ contains contributions from the community as credited in each game and asset.
 Welcome to <quadplay/>! 
 
 <table style="width:100%"><tr><td>
-<a href="https://morgan3d.github.io/quadplay/tools/windows-install-quadplay.cmd" download style="background-image: linear-gradient(to top, #306fcf 0%, #80bfff 70%, #bbefff 100%); text-shadow: 0px -1px 1px rgb(0 0 0 / 50%); color:#fff !important; text-decoration: none; width:360px; display: block; border: 2px solid #fff; border-radius: 30px; padding: 20px; font-size: 150%; box-shadow: 1px 1px #000; font-weight: bold; text-align: center">Download Windows Installer</a>
+<a href="https://factory797.github.io/quadplay/tools/windows-install-quadplay.cmd" download style="background-image: linear-gradient(to top, #306fcf 0%, #80bfff 70%, #bbefff 100%); text-shadow: 0px -1px 1px rgb(0 0 0 / 50%); color:#fff !important; text-decoration: none; width:360px; display: block; border: 2px solid #fff; border-radius: 30px; padding: 20px; font-size: 150%; box-shadow: 1px 1px #000; font-weight: bold; text-align: center">Download Windows Installer</a>
 </td><td>
 *macOS and Linux:*
 
 1. Install [Python 3.7](https://www.python.org/ target="_blank") or newer
-2. Unzip [<quadplay/>](https://github.com/morgan3d/quadplay/archive/main.zip) to wherever you want
+2. Unzip [<quadplay/>](https://github.com/factory797/quadplay/archive/main.zip) to wherever you want
 3. Run `quadplay` from the terminal
 </td></tr></table>
 
@@ -126,7 +126,7 @@ examples that are included and try modifying your own copies of them.
     Experienced programmers can use external editors with <quadplay/> for both
     programming and directly modifying game and asset `.json` files by:
     <ul>
-      <li>Optionally [clone the SDK with git](https://github.com/morgan3d/quadplay) to manage SDK upgrades</li>
+      <li>Optionally [clone the SDK with git](https://github.com/factory797/quadplay) to manage SDK upgrades</li>
       <li>Install a code editor (_[Visual Studio Code](https://code.visualstudio.com/), [Atom](https://atom.io/), [Sublime Text](https://www.sublimetext.com), Vim, Emacs, etc._)</li>
       <li>Install the PyxlScript extension for your editor: _[Visual Studio Code](#advancedtools/visualstudiocode)_, _[Vim](#advancedTools/vim)_, _[Emacs](#advancedtools/emacs)_</li>
       <li>Put your games under `~/my_quadplay/`. The IDE always creates new games in the root of that path, but
@@ -409,7 +409,7 @@ game inspired by Pong and Breakout:
 <div class="preview pixel" style="background-image:url('../games/find_word/preview.png')"></div>
 [FIND WORD ALLL NITE](../console/quadplay.html?game=quad://games/find_word&IDE=1) 
 
-- Hosting directly from a github repo without export (see https://morgan3d.github.io/quadplay/games/find_word)
+- Hosting directly from a github repo without export (see https://factory797.github.io/quadplay/games/find_word)
 - Mouse, touch, and gamepad input
 - Stable random seeds
 - Planet-wide synchronization events across players
@@ -3989,7 +3989,7 @@ the one element that will probably confuse your syntax highlighter.
 
 `export.py`
 : Export a static HTML site for a single game, either lightweight by referencing
-  `https://morgan3d.github.io/quadplay` or standalone by embedding a full copy of
+  `https://factory797.github.io/quadplay` or standalone by embedding a full copy of
   the emulator. Run the script with `--help` to see the arguments.
 
   Run as `tools/export.py ...` on Linux and macOS, or `py tools/export.py ...` on Windows
@@ -4430,7 +4430,7 @@ when the headers are in effect.
 The headers block cross-origin content that does not opt in with
 a `Cross-Origin-Resource-Policy` header. A standalone export is
 entirely same-origin, so it is unaffected. A `--noquad` export
-embeds the emulator from `morgan3d.github.io`, which is
+embeds the emulator from `factory797.github.io`, which is
 cross-origin, so do not send the headers for that kind of export.
 
 
@@ -4517,7 +4517,7 @@ on the settings page, select "main" from the Source section dropdown.
 
 The URL to play your game is then:
 
-`https://morgan3d.github.io/quadplay/console/quadplay.html?game=https://USER.github.io/REPO&mode=Maximal`.
+`https://factory797.github.io/quadplay/console/quadplay.html?game=https://USER.github.io/REPO&mode=Maximal`.
 
 If you'd like to make a friendlier URL, then you can also create an `index.html` file
 in the root of your repo with the contents:
@@ -4563,7 +4563,7 @@ the headers with whatever custom header mechanism the host provides.
 If you wish to only host the source files for your game and not all of quadplay,
 then you can do so. The URL for your game is:
 
-https://morgan3d.github.io/quadplay/console/quadplay.html?game=https://myserver.com/mygame
+https://factory797.github.io/quadplay/console/quadplay.html?game=https://myserver.com/mygame
 
 
 ### Phones

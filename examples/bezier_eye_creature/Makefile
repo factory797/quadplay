@@ -77,7 +77,7 @@ endif
 # @}
 
 # this target deploys to a github repo that you can then point at with a url like:
-# https://morgan3d.github.io/quadplay/console/quadplay.html?game=https://<USER_NAME>.github.io/<DEPLOY_REPO_NAME>/<GAME_NAME>.game.json
+# https://factory797.github.io/quadplay/console/quadplay.html?game=https://<USER_NAME>.github.io/<DEPLOY_REPO_NAME>/<GAME_NAME>.game.json
 # the target needs to be something like: DEPLOY_REMOTE = git@github.com:<USER_NAME>/<DEPLOY_REPO_NAME>.git
 deploy: \
 	_check_git_status_is_clean \
@@ -99,7 +99,7 @@ deploy: \
 	
 	@echo "$(COLOR_GREEN)"
 	@echo "Deploy branch is now moved." 
-	@echo "To test visit: https://morgan3d.github.io/quadplay/console/quadplay.html?game=https://"$(GITHUB_USERNAME)".github.io/$(DEPLOY_REPO_NAME)/$(GAME_NAME).game.json"
+	@echo "To test visit: https://factory797.github.io/quadplay/console/quadplay.html?game=https://"$(GITHUB_USERNAME)".github.io/$(DEPLOY_REPO_NAME)/$(GAME_NAME).game.json"
 	@echo "$(COLOR_RESET)"
 
 # make a zipfile for itch

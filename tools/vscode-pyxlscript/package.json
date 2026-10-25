@@ -4,7 +4,7 @@
     "description": "Language Support for pyxlscript",
     "version": "0.0.1",
     "publisher": "CasualEffects",
-    "repository": "https://github.com/morgan3d/quadplay-dev.git",
+    "repository": "https://github.com/factory797/quadplay-dev.git",
     "engines": {
         "vscode": "^1.35.0"
     },

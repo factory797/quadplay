@@ -378,7 +378,7 @@ class UpdateThread(threading.Thread):
         
             elif quadplay_origin == 'downloaded release':
                 os.mkdir('temp')
-                run_shell_command('curl --location --output temp/quadplay-install.zip https://github.com/morgan3d/quadplay/archive/refs/heads/main.zip')
+                run_shell_command('curl --location --output temp/quadplay-install.zip https://github.com/factory797/quadplay/archive/refs/heads/main.zip')
                 os.chdir('temp')
                 try:
                     run_shell_command('tar -xf quadplay-install.zip')

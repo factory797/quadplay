@@ -108,7 +108,7 @@ let allow_bloom = true;
         const a = Math.min(1, Math.max(0, (i - 1) / (banner.length - 2)));
         style.push(`color: rgb(${clerp(255, 0, a)}, ${clerp(64, 169, a)}, ${clerp(158, 227, a)}); text-shadow: 0px 2px 3px rgba(0, 0, 0, 20%)`);
     }
-    console.log('\n\n\n' + banner.join('\n') + '\n\nquadplay✜ version ' + version + '\n©2019-2025 Morgan McGuire\nLicensed as GPL 3.0\nhttps://www.gnu.org/licenses/gpl-3.0.en.html\n' +
+    console.log('\n\n\n' + banner.join('\n') + '\n\nquadplay✜ version ' + version + '\n©2026 Shmuel Ravensky, ©2019-2025 Morgan McGuire\nLicensed as GPL 3.0\nhttps://www.gnu.org/licenses/gpl-3.0.en.html\n' +
                 '\nSecure Context: ' + window.isSecureContext +
                 '\nQuadplay Server: ' + isQuadserver +
                 '\nBrowser: ' + browserName +
@@ -4152,7 +4152,7 @@ setTimeout(updateControllerIcons, 100);
 
 
 const BOOT_INFO = `<span style="color:#ec5588">quadplay✜ ${version}</span>
-<span style="color:#937ab7">© 2019-2025 Morgan McGuire</span>
+<span style="color:#937ab7">© 2026 Shmuel Ravensky, © 2019-2025 Morgan McGuire</span>
 <span style="color:#5ea9d8">Licensed under LGPL 3.0</span>
 <span style="color:#859ca6">https://casual-effects.com</span>
 
@@ -4980,7 +4980,7 @@ function checkForUpdate() {
         }
     }
 
-    fetch('https://raw.githubusercontent.com/morgan3d/quadplay/main/console/version.js').then(response => response.text()).then(function (text) {
+    fetch('https://raw.githubusercontent.com/factory797/quadplay/main/console/version.js').then(response => response.text()).then(function (text) {
         const latestVersion = parseVersionJS(text);
         const installedVersion = parseVersionJS(`const version = '${version}';\n`);
 

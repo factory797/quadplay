@@ -3,7 +3,7 @@
 ;; Copyright © 2025, by Morgan McGuire
 
 ;; Author: Morgan McGuire, https://casual-effects.com
-;; URL: https://github.com/morgan3d/quadplay/blob/main/tools/pyxlscript-mode.el
+;; URL: https://github.com/factory797/quadplay/blob/main/tools/pyxlscript-mode.el
 ;; Version: 0.0.3
 ;; Keywords: languages, pyxlscript
 
